@@ -43,14 +43,14 @@ function App() {
 
   const microphoneRef = useRef<MediaStream | null>(null)
 
-  const dataChennelRef = useRef<RTCDataChannel | null>(null)
+  const dataChannelRef = useRef<RTCDataChannel | null>(null)
 
   function cleanup() {
     microphoneRef.current
       ?.getTracks()
       .forEach((track) => track.stop())
 
-    dataChennelRef.current?.close()
+    dataChannelRef.current?.close()
 
     peerConnectionRef.current?.close()
 
@@ -59,92 +59,98 @@ function App() {
     }
 
     microphoneRef.current = null
-    dataChennelRef.current = null
+    dataChannelRef.current = null
     peerConnectionRef.current = null
 
     setConnected(false)
   }
 
   async function startConversation() {
-    setStatus("Requesting microphone")
+    try {
+      setStatus("Requesting microphone")
 
-    const peerConnection = new RTCPeerConnection()
+      const peerConnection = new RTCPeerConnection()
+      peerConnectionRef.current = peerConnection
 
-    peerConnectionRef.current = peerConnection
+      peerConnection.ontrack = (event) => {
+        if (!audioRef.current) {
+          return
+        }
 
-    peerConnection.ontrack = (event) => {
-      if (!audioRef.current) {
-        return
+        audioRef.current.srcObject = new MediaStream([event.track])
       }
 
-      audioRef.current.srcObject = new MediaStream([event.track])
-    }
+      const microphone = await navigator.mediaDevices.getUserMedia({ audio: true })
 
-    const microphone = await navigator.mediaDevices.getUserMedia({ audio: true })
+      microphoneRef.current = microphone
 
-    microphoneRef.current = microphone
+      for (const track of microphone.getAudioTracks()) {
+        peerConnection.addTrack(track, microphone)
+      }
 
-    for (const track of microphone.getAudioTracks()) {
-      peerConnection.addTrack(track, microphone)
-    }
+      const dataChannel = peerConnection.createDataChannel("oai-events")
 
-    const dataChannel = peerConnection.createDataChannel("oai-events")
+      dataChannelRef.current = dataChannel
 
-    dataChennelRef.current = dataChannel
-
-    dataChannel.onmessage = (event) => {
       /**
        * TODO
-       * update the events
+       * communication of data/events
        */
-      const data = JSON.parse(event.data)
+      dataChannel.onmessage = (event) => {
+        const data = JSON.parse(event.data)
 
-      // console.log(data.type)
+        /**
+         * For tool call, do this and send response back?
+         */
 
-      if (data.type === "session.input_transcript.delta") {
-        console.log(`User: ${data.delta}`)
+        if (data.type === "session.usage.updated") {
+          console.log(`Usage: ${JSON.stringify(data)}`)
+        }
+
+        if (data.type === "session.input_transcript.delta") {
+          console.log(`User: ${data.delta}`)
+        }
+
+        if (data.type === "session.output_transcript.delta") {
+          console.log(`Assistant: ${data.delta}`)
+        }
+
+        if (data.type === "session.started") {
+          setStatus("Connected")
+          setConnected(true)
+        }
+
+        if (data.type === "session.closed") {
+          cleanup()
+          setStatus("Disconnected")
+        }
+
       }
 
-      if (data.type === "session.output_transcript.delta") {
-        console.log(`Assistant: ${data.delta}`)
+      const offer = await peerConnection.createOffer()
+
+      await peerConnection.setLocalDescription(offer)
+
+      await waitForIceGathering(peerConnection)
+
+      const sdp = peerConnection.localDescription?.sdp
+
+      if (!sdp) {
+        throw new Error("Failed to create SDP offer.")
       }
 
-      if (data.type === "session.started") {
-        setStatus("Connected")
-        setConnected(true)
-      }
+      /**
+       * TODOs
+       * Go to the backend get SDP answer from OpenAI
+       */
+      setStatus("Connecting")
 
-      if (data.type === "session.closed") {
-        cleanup()
-        setStatus("Disconnected")
-      }
-    }
-
-    const offer = await peerConnection.createOffer()
-
-    await peerConnection.setLocalDescription(offer)
-
-    await waitForIceGathering(peerConnection)
-
-    const sdp = peerConnection.localDescription?.sdp
-
-    if (!sdp) {
-      throw new Error("Failed to create SDP offer.")
-    }
-
-    setStatus("Connecting to OpenAI")
-
-    /**
-     * TODO
-     * call OpenAI, backend, SDP answer
-     */
-    try {
       const response = await fetch("/api/session", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ sdp: sdp })
+        body: JSON.stringify({ sdp: sdp, customerId: "CUS-1001" })
       })
 
       if (!response.ok) {
@@ -157,16 +163,16 @@ function App() {
         type: "answer",
         sdp: result.transport.sdp
       })
-    } catch (error) {
-      console.error(error)
-      cleanup()
-      setStatus("Connection failed.")
-    }
 
+    } catch (error) {
+      console.log(error)
+      cleanup()
+      setStatus("Connection failed")
+    }
   }
 
   function endConversation() {
-    const dataChannel = dataChennelRef.current
+    const dataChannel = dataChannelRef.current
 
     if (dataChannel?.readyState === "open") {
       setStatus("Ending")
@@ -175,13 +181,14 @@ function App() {
 
       return
     }
+
     cleanup()
     setStatus("Disconnected")
   }
 
   return (
     <main>
-      <h1>GPT-LIVE Voice Assistant</h1>
+      <h1>GPT-Live Voice Assistant</h1>
 
       <p>Status: {status}</p>
 
@@ -192,7 +199,6 @@ function App() {
       )}
 
       <audio ref={audioRef} autoPlay></audio>
-
     </main>
   )
 }
