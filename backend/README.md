@@ -1,15 +1,24 @@
-# backend
+# Run the backend
 
-To install dependencies:
+Requires Bun and an OpenAI API key.
+
+From the repository root, install dependencies:
 
 ```bash
+cd backend
 bun install
 ```
 
-To run:
+Create a `.env` file in `backend` with your API key:
+
+```env
+OPENAI_API_KEY=your_openai_api_key
+```
+
+Start the server:
 
 ```bash
 bun run index.ts
 ```
 
-This project was created using `bun init` in bun v1.4.2. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.
+The backend runs at `http://localhost:3000`. Keep it running while you start the [frontend](../frontend/README.md).
